@@ -7,3 +7,5 @@
 {'eval_loss': 0.013457473367452621, 'eval_precision': 0.819000819000819, 'eval_recall': 0.9074410163339383, 'eval_f1': 0.8609556607834696, 'eval_accuracy': 0.9955035802417439, 'eval_runtime': 55.4534, 'eval_samples_per_second': 103.889, 'eval_steps_per_second': 13.002, 'epoch': 3.0}
 
 these are some data when training the model.
+
+This model actually seems not very well, I tried many sentence and it got wrong about 30%🤔. 
