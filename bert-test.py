@@ -2,13 +2,13 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from transformers import BertTokenizer, BertModel, BertConfig
-from torchtext.data.utils import get_tokenizer
-from torchtext.vocab import build_vocab_from_iterator
-import torchtext
+# from torchtext.data.utils import get_tokenizer
+# from torchtext.vocab import build_vocab_from_iterator
+# import torchtext
 import datasets
 import time
 
-torchtext.disable_torchtext_deprecation_warning()
+# torchtext.disable_torchtext_deprecation_warning()
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # device = torch.device('cpu')
@@ -18,12 +18,12 @@ torch.cuda.empty_cache()
 #         print(data['train'][0]['tokens'])
 
 class Bert(nn.Module):
-    def __init__(self, device):
+    def __init__(self, device, num_classes):
         super(Bert, self).__init__()
         self.bert = BertModel.from_pretrained('bert-base-uncased')
         self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
         mask_token = torch.tensor(self.tokenizer.mask_token_id).to(device)
-        self.linear = nn.Linear(self.bert.config.hidden_size, 1)
+        self.linear = nn.Linear(self.bert.config.hidden_size, num_classes)
         self.softmax = nn.Sigmoid() # Use sigmoid for binary classification
         self.to(device)
 
@@ -47,6 +47,7 @@ class Bert(nn.Module):
         x = self.linear(hidden_states)
         # print('softmax', nn.Softmax(dim=1)(x), nn.Softmax(dim=1)(x).shape)
         # print(self.softmax(x).shape, self.softmax(x), torch.round(self.softmax(x)).shape, torch.round(self.softmax(x)))
+        print('looka t me!', self.softmax(x), self.softmax(x).shape)
         return torch.round(self.softmax(x))
 
 
@@ -56,21 +57,13 @@ if __name__ == "__main__":
     train_testvalid = data.train_test_split(test_size=0.1)
     test_valid = train_testvalid['test'].train_test_split(test_size=0.5)
     train_iter = train_testvalid['train']
+
+    num_classes = 1  # Adjust based on the number of your labels
+
     # print(train_testvalid, test_valid)
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-    # tokenizer = get_tokenizer("basic_english")
-    # def yield_tokens(data_iter):
-    #     print(len(data_iter), type(data_iter), type(data_iter[0]))
-    #     for text in data_iter:
-    #         yield tokenizer(' '.join(text))
-    
-    # text_pipeline = lambda x: vocab(tokenizer(x))
+
     pie_pipeline = lambda x: 1 if x == 'pie' else 0
-    # vocab = build_vocab_from_iterator(yield_tokens(train_iter['tokens']), specials=["<unk>"])
-    # vocab.set_default_index(vocab["<unk>"])
-    # vocab_size = len(vocab)
-    # def tokenize_function(examples):
-    #     return [tokenizer(e, padding="longest") for e in examples]  # Adjust truncation as needed
     
     def collate_batch(batch):
         idiom, is_pie, texts, ner_tags = zip(*[b.values() for b in batch])
@@ -81,11 +74,16 @@ if __name__ == "__main__":
         attention_mask = torch.tensor([item['attention_mask'] for item in tokens], dtype=torch.float32).to(device)
         # print(attention_mask.type(), input_ids.type())
         # Convert labels to tensors (modify based on your label type)
-        is_pie = torch.tensor([pie_pipeline(x) for x in is_pie], dtype=torch.int64)
+        is_pie = torch.tensor([pie_pipeline(x) for x in is_pie], dtype=torch.int64).to(device)
+        
+        # one_hot_labels = torch.zeros((len(is_pie), num_classes), dtype=torch.float32).to(device)
+        # print(one_hot_labels.type(), one_hot_labels.shape, '\n\nisPIE!!')
+        # for i, label in enumerate(is_pie):
+        #     one_hot_labels[i][label] = 1.0
 
-        return is_pie.to(device), attention_mask, input_ids
-    # tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-    model = Bert(device).to(device)
+        return is_pie, attention_mask, input_ids
+    
+    model = Bert(device, num_classes).to(device)
 
     dataloader = DataLoader(
         train_iter,
@@ -97,6 +95,9 @@ if __name__ == "__main__":
         print(batch)
         break
     
+# data goes in as 4x512x2 tensor - 4 batches of 512 tokens with 2 classes
+# want it return a 4x2 tensor - 4 batches of 2 classes, how do 
+
     def train(dataloader):
         model.train()
         total_acc, total_count = 0, 0
@@ -106,17 +107,18 @@ if __name__ == "__main__":
         for idx, (is_pie, attention_mask, tokens) in enumerate(dataloader):
             optimizer.zero_grad()
             predicted_label = model(tokens, attention_mask)
-            # print(predicted_label, predicted_label.type())
+            # print(predicted_label, predicted_label.type(), '\n',predicted_label.shape, is_pie.shape, is_pie, 'look!!!\n')
             # predicted_label = torch.where(predicted_label > 0.5, torch.tensor(1, dtype=torch.float32), torch.tensor(0, dtype=torch.float32))
             # print(predicted_label.type())
-            loss = criterion(predicted_label, is_pie.unsqueeze(1))
+            loss = criterion(predicted_label, is_pie)
             # print(loss, loss.type())
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 0.1)
             optimizer.step()
-            print(predicted_label, is_pie.unsqueeze(1), predicted_label.shape, is_pie.unsqueeze(1).shape, is_pie.shape)
+            print('predicted label', predicted_label)
+            # print(predicted_label, is_pie.unsqueeze(1), predicted_label.shape, is_pie.unsqueeze(1).shape, is_pie.shape)
             total_acc += (predicted_label == is_pie).sum().item()
-            total_count += 1
+            total_count += BATCH_SIZE
             if idx % log_interval == 0 and idx > 0:
                 elapsed = time.time() - start_time
                 print(total_acc, total_count)
@@ -146,7 +148,7 @@ if __name__ == "__main__":
     LR = 5  # learning rate
     BATCH_SIZE = 4  # batch size for training
 
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion = torch.nn.BCELoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=LR)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1.0, gamma=0.1)
     total_accu = None
